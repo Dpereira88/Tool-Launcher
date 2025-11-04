@@ -1,0 +1,6 @@
+# Requirements for Tool Launcher
+# Install with: pip install -r requirements.txt
+# Detected dependency from ToolLauncer.py: customtkinter
+# If you need a specific Python version, ensure Python 3.8+ is installed.
+
+customtkinter
