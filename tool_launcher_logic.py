@@ -18,9 +18,8 @@ class ToolLauncherLogic:
     def __init__(self, script_dir: str):
         """Initialize with script directory."""
         self.script_dir = script_dir
-        self.settings_file = os.path.join(script_dir, "settings.json")
+        self.app_config_file = os.path.join(script_dir, "app_config.json")
         self.history_file = os.path.join(script_dir, "launch_history.json")
-        self.configs_list_file = os.path.join(script_dir, "configs_list.json")
         
         self.configs_list: List[Dict[str, str]] = []
         self.current_config: Optional[Dict[str, str]] = None
@@ -30,24 +29,31 @@ class ToolLauncherLogic:
         self.launch_history: List[Dict[str, str]] = []
         
         self.initialize_defaults()
-        self.configs_list = self.load_configs_list()
+        self.load_app_config()
         self.launch_history = self.load_history()
     
     # ==================== INITIALIZATION ====================
     
     def initialize_defaults(self) -> None:
-        """Create default files if missing."""
-        if os.path.exists(self.configs_list_file):
+        """Create default app config if missing."""
+        if os.path.exists(self.app_config_file):
             return
         
-        default_configs_list = [{
-            "name": "Default Tools",
-            "config_path": os.path.join(self.script_dir, "config_default.json").replace("\\", "/")
-        }]
+        default_app_config = {
+            "settings": {
+                "appearance_mode": "System",
+                "color_theme": "blue"
+            },
+            "configs": [{
+                "name": "Default Tools",
+                "config_path": os.path.join(self.script_dir, "config_default.json").replace("\\", "/")
+            }]
+        }
         
-        with open(self.configs_list_file, 'w', encoding='utf-8') as f:
-            json.dump(default_configs_list, f, indent=2)
+        with open(self.app_config_file, 'w', encoding='utf-8') as f:
+            json.dump(default_app_config, f, indent=2)
         
+        # Create default tool config
         default_config = {
             "example": {
                 "web page": {
@@ -60,21 +66,42 @@ class ToolLauncherLogic:
         with open(os.path.join(self.script_dir, "config_default.json"), 'w', encoding='utf-8') as f:
             json.dump(default_config, f, indent=2)
     
+    def load_app_config(self) -> None:
+        """Load app configuration (settings + configs list)."""
+        try:
+            with open(self.app_config_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                self.configs_list = [
+                    item for item in data.get("configs", [])
+                    if 'name' in item and 'config_path' in item
+                ]
+        except Exception:
+            self.configs_list = []
+    
+    def save_app_config(self) -> None:
+        """Save app configuration (settings + configs list)."""
+        try:
+            data = {}
+            if os.path.exists(self.app_config_file):
+                with open(self.app_config_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+            
+            data["configs"] = self.configs_list
+            
+            with open(self.app_config_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving app config: {e}")
+    
     # ==================== CONFIG MANAGEMENT ====================
     
     def load_configs_list(self) -> List[Dict[str, str]]:
-        """Load configs list from file."""
-        try:
-            with open(self.configs_list_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                return [item for item in data if 'name' in item and 'config_path' in item]
-        except Exception:
-            return []
+        """Load configs list from app config."""
+        return self.configs_list
     
     def save_configs_list(self) -> None:
-        """Save configs list to file."""
-        with open(self.configs_list_file, 'w', encoding='utf-8') as f:
-            json.dump(self.configs_list, f, indent=2)
+        """Save configs list to app config."""
+        self.save_app_config()
     
     def add_config(self, config_name: str, config_path: str = "", config_filename: str = "") -> tuple[bool, str]:
         """Add new config. Returns (success, message)."""
@@ -439,28 +466,33 @@ class ToolLauncherLogic:
     # ==================== SETTINGS MANAGEMENT ====================
     
     def load_settings(self) -> Dict[str, str]:
-        """Load settings from file."""
+        """Load settings from app config."""
         default = {"appearance_mode": "System", "color_theme": "blue"}
-        if os.path.exists(self.settings_file):
+        if os.path.exists(self.app_config_file):
             try:
-                with open(self.settings_file, 'r') as f:
-                    settings = json.load(f)
+                with open(self.app_config_file, 'r') as f:
+                    data = json.load(f)
+                    settings = data.get("settings", default)
                 return {
                     "appearance_mode": settings.get("appearance_mode", default["appearance_mode"]),
                     "color_theme": settings.get("color_theme", default["color_theme"])
                 }
             except:
-                self.save_settings(default)
                 return default
-        else:
-            self.save_settings(default)
-            return default
+        return default
     
     def save_settings(self, settings: Dict[str, str]) -> None:
-        """Save settings to file."""
+        """Save settings to app config."""
         try:
-            with open(self.settings_file, 'w') as f:
-                json.dump(settings, f, indent=2)
+            data = {}
+            if os.path.exists(self.app_config_file):
+                with open(self.app_config_file, 'r') as f:
+                    data = json.load(f)
+            
+            data["settings"] = settings
+            
+            with open(self.app_config_file, 'w') as f:
+                json.dump(data, f, indent=2)
         except Exception as e:
             print(f"Error saving settings: {e}")
     

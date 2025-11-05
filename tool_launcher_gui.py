@@ -185,18 +185,21 @@ class ToolLauncherGUI:
         frm = ctk.CTkFrame(self.scroll)
         frm.pack(fill="x", pady=3, padx=16)
         name = itm.get("name", "?")
+        
+        # Edit/Delete buttons on the LEFT side when in edit mode
+        if self.edit_mode:
+            del_btn = ctk.CTkButton(frm, text="Del", width=50, height=35, fg_color="red")
+            del_btn.configure(command=lambda: self.del_item(cat, typ, idx))
+            del_btn.pack(side="left", padx=(0, 2))
+            
+            edit_btn = ctk.CTkButton(frm, text="Edit", width=60, height=35)
+            edit_btn.configure(command=lambda: self.open_sidebar("item_edit", "Edit Item", cat, typ, idx, itm))
+            edit_btn.pack(side="left", padx=(0, 5))
+        
+        # Launch button fills remaining space
         launch_btn = ctk.CTkButton(frm, text=name, anchor="w", height=35)
         launch_btn.configure(command=lambda: self.launch(typ, itm["path"], name))
         launch_btn.pack(side="left", fill="x", expand=True)
-
-        if self.edit_mode:
-            edit_btn = ctk.CTkButton(frm, text="Edit", width=60, height=35)
-            edit_btn.configure(command=lambda: self.open_sidebar("item_edit", "Edit Item", cat, typ, idx, itm))
-            edit_btn.pack(side="right", padx=2)
-
-            del_btn = ctk.CTkButton(frm, text="Del", width=50, height=35, fg_color="red")
-            del_btn.configure(command=lambda: self.del_item(cat, typ, idx))
-            del_btn.pack(side="right")
 
     def launch(self, typ: str, path: str, name: str):
         ok, err = self.logic.launch(typ, path, name)
