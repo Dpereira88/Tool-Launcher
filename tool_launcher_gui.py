@@ -1,213 +1,367 @@
+"""
+Tool Launcher GUI
+Pure UI layer - ZERO business logic, no file operations
+All data operations delegated to ToolLauncherLogic
+"""
 import customtkinter as ctk
 from tkinter import messagebox
-import os
 from typing import Dict, Optional
 from tool_launcher_logic import ToolLauncherLogic
 
 
 class ToolLauncherGUI:
+    """Main GUI class - handles ONLY user interface and events"""
+    
     def __init__(self):
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.logic = ToolLauncherLogic(script_dir)
-        sets = self.logic.load_settings()
-        self.saved_settings = sets
-        ctk.set_appearance_mode(sets["appearance_mode"])
-        ctk.set_default_color_theme(sets["color_theme"])
+        """Initialize the GUI with settings and create the main window"""
+        # Initialize logic layer - ALL business logic goes here
+        self.logic = ToolLauncherLogic()
+        
+        # Load saved settings from logic layer
+        self.saved_settings = self.logic.get_settings()
+        
+        # Apply theme settings
+        ctk.set_appearance_mode(self.saved_settings["appearance_mode"])
+        ctk.set_default_color_theme(self.saved_settings["color_theme"])
 
+        # Create main window
         self.root = ctk.CTk()
         self.root.title("Tool Launcher")
-        self.root.geometry("340x680")
         self.root.minsize(340, 500)
 
+        # Load window position and size
+        pos = self.saved_settings.get("window_pos")
+        if pos and len(pos) == 4:
+            self.root.geometry(f"{pos[2]}x{pos[3]}+{pos[0]}+{pos[1]}")
+        else:
+            self.root.geometry("440x680")
+
+        # Initialize UI state variables
         self.edit_mode = False
-        self.search_query = ""
+        self.show_text = self.saved_settings.get("show_text", True)
         self.sidebar_visible = False
         self.animating = False
         self.sidebar_mode = ""
         self.editing_item: Optional[Dict] = None
 
+        # Build UI components
         self._build_ui()
         self._load_first_config()
+        
+        # Force entry field redraw after initialization
+        self.root.after(200, self._redraw_entries)
+
+        # Save position on close
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+    def on_close(self):
+        """Save window position before closing"""
+        x = self.root.winfo_x()
+        y = self.root.winfo_y()
+        w = self.root.winfo_width()
+        h = self.root.winfo_height()
+        
+        # Delegate to logic layer
+        self.logic.save_window_position(x, y, w, h)
+        self.root.destroy()
 
     def _build_ui(self):
+        """Build all UI components"""
+        # ===== HEADER LINE 1: Config selector and Edit button =====
         line1 = ctk.CTkFrame(self.root)
         line1.pack(fill="x", padx=12, pady=(12, 4))
 
-        self.combo = ctk.CTkComboBox(line1, width=150,
-            values=[c["name"] for c in self.logic.configs_list],
-            command=self.on_config_change)
+        self.combo = ctk.CTkComboBox(
+            line1, 
+            width=200,
+            values=self.logic.get_config_names(),
+            command=self.on_config_change
+        )
         self.combo.pack(side="left", padx=(0, 8))
 
-        ctk.CTkButton(line1, text="Edit", width=70, command=self.toggle_edit).pack(side="left", padx=4)
-        ctk.CTkButton(line1, text="History", width=80, command=self.show_history).pack(side="left", padx=4)
+        ctk.CTkButton(
+            line1, 
+            text="Edit", 
+            width=80, 
+            command=self.toggle_edit
+        ).pack(side="left", padx=4)
 
-        self.search = ctk.CTkEntry(self.root, placeholder_text="Search name or path...")
+        # ===== HEADER LINE 2: Search bar (full width) =====
+        self.search = ctk.CTkEntry(
+            self.root, 
+            placeholder_text="Search name or path..."
+        )
         self.search.pack(fill="x", padx=12, pady=(0, 10))
-        self.search.bind("<KeyRelease>", lambda e: self.search_update())
+        self.search.bind("<KeyRelease>", lambda e: self.on_search_change())
 
+        # ===== EDIT MODE BAR (hidden by default) =====
         self.edit_bar = ctk.CTkFrame(self.root)
 
+        # Config management row
         cfg_row = ctk.CTkFrame(self.edit_bar)
         cfg_row.pack(fill="x", pady=4, padx=12)
-        btn = ctk.CTkButton(cfg_row, text="Add Config", width=100)
-        btn.configure(command=lambda: self.open_sidebar("config_add", "Add Config"))
-        btn.pack(side="left", padx=4)
-        btn = ctk.CTkButton(cfg_row, text="Edit Config", width=100)
-        btn.configure(command=lambda: self.open_sidebar("config_edit", "Edit Config"))
-        btn.pack(side="left", padx=4)
-        btn = ctk.CTkButton(cfg_row, text="Delete Config", width=100, fg_color="red")
-        btn.configure(command=self.delete_config)
-        btn.pack(side="left", padx=4)
+        
+        ctk.CTkButton(
+            cfg_row, 
+            text="Add Config", 
+            width=110,
+            command=lambda: self.open_sidebar("config_add", "Add Config")
+        ).pack(side="left", padx=4)
+        
+        ctk.CTkButton(
+            cfg_row, 
+            text="Edit Config", 
+            width=110,
+            command=lambda: self.open_sidebar("config_edit", "Edit Config")
+        ).pack(side="left", padx=4)
+        
+        ctk.CTkButton(
+            cfg_row, 
+            text="Delete Config", 
+            width=110, 
+            fg_color="red", 
+            hover_color="red",
+            command=self.on_delete_config
+        ).pack(side="left", padx=4)
 
+        # Item management row
         item_row = ctk.CTkFrame(self.edit_bar)
         item_row.pack(fill="x", pady=4, padx=12)
-        btn = ctk.CTkButton(item_row, text="Add Item", width=100)
-        btn.configure(command=lambda: self.open_sidebar("item_add", "Add Item"))
-        btn.pack(side="left", padx=4)
-        ctk.CTkButton(item_row, text="Refresh", width=80, command=self.refresh).pack(side="left", padx=4)
-        ctk.CTkButton(item_row, text="Settings", width=90, command=self.show_settings).pack(side="left", padx=4)
+        
+        ctk.CTkButton(
+            item_row, 
+            text="Add Item", 
+            width=100,
+            command=lambda: self.open_sidebar("item_add", "Add Item")
+        ).pack(side="left", padx=4)
+        
+        ctk.CTkButton(
+            item_row, 
+            text="Refresh", 
+            width=90, 
+            command=self.refresh_display
+        ).pack(side="left", padx=4)
+        
+        ctk.CTkButton(
+            item_row, 
+            text="Settings", 
+            width=90, 
+            command=self.show_settings
+        ).pack(side="left", padx=4)
 
+        # ===== SCROLLABLE CONTENT AREA =====
         self.scroll = ctk.CTkScrollableFrame(self.root)
         self.scroll.pack(fill="both", expand=True, padx=12, pady=8)
 
+        # ===== SIDEBAR (slides in from left) =====
         self.sidebar = ctk.CTkFrame(self.root, width=300, corner_radius=0)
-        self.sidebar_title = ctk.CTkLabel(self.sidebar, text="", font=("Segoe UI", 18, "bold"), anchor="w")
+        
+        # Sidebar title
+        self.sidebar_title = ctk.CTkLabel(
+            self.sidebar, 
+            text="", 
+            font=("Segoe UI", 18, "bold"), 
+            anchor="w"
+        )
         self.sidebar_title.pack(pady=(16, 8), padx=16, fill="x")
+        
+        # Message label for feedback
         self.msg = ctk.CTkLabel(self.sidebar, text="")
         self.msg.pack(pady=4)
 
-        # Create entry fields with proper configuration
-        self.f_name = ctk.CTkEntry(self.sidebar, placeholder_text="Config Name", height=35)
-        self.f_path = ctk.CTkEntry(self.sidebar, placeholder_text="Folder Path (optional)", height=35)
-        self.f_filename = ctk.CTkEntry(self.sidebar, placeholder_text="Filename (e.g., my_config.json)", height=35)
-        self.f_cat = ctk.CTkEntry(self.sidebar, placeholder_text="Category", height=35)
-        self.f_type = ctk.CTkComboBox(self.sidebar, 
-            values=["folder", "python project", "bat file", "web page"],
-            height=35)
+        # ===== SIDEBAR INPUT FIELDS =====
+        # Config fields
+        self.f_name = ctk.CTkEntry(
+            self.sidebar, 
+            placeholder_text="Config Name", 
+            height=35
+        )
+        self.f_path = ctk.CTkEntry(
+            self.sidebar, 
+            placeholder_text="Folder Path (optional)", 
+            height=35
+        )
+        self.f_filename = ctk.CTkEntry(
+            self.sidebar, 
+            placeholder_text="Filename (e.g., my_config.json)", 
+            height=35
+        )
+        
+        # Item fields
+        self.f_cat = ctk.CTkEntry(
+            self.sidebar, 
+            placeholder_text="Category", 
+            height=35
+        )
+        self.f_type = ctk.CTkComboBox(
+            self.sidebar, 
+            values=["folder", "python project", "bat file", "web page"], 
+            height=35
+        )
         self.f_type.set("folder")
-        self.f_iname = ctk.CTkEntry(self.sidebar, placeholder_text="Name", height=35)
-        self.f_ipath = ctk.CTkEntry(self.sidebar, placeholder_text="Path / URL", height=35)
+        
+        self.f_iname = ctk.CTkEntry(
+            self.sidebar, 
+            placeholder_text="Name", 
+            height=35
+        )
+        self.f_ipath = ctk.CTkEntry(
+            self.sidebar, 
+            placeholder_text="Path / URL", 
+            height=35
+        )
 
-        for w in (self.f_name, self.f_path, self.f_filename, self.f_cat, self.f_type, self.f_iname, self.f_ipath):
+        # Hide all fields initially
+        for w in (self.f_name, self.f_path, self.f_filename, 
+                  self.f_cat, self.f_type, self.f_iname, self.f_ipath):
             w.pack_forget()
 
+        # Sidebar buttons
         btns = ctk.CTkFrame(self.sidebar)
         btns.pack(pady=20, fill="x", padx=20)
+        
         right_frame = ctk.CTkFrame(btns)
         right_frame.pack(side="right")
-        ctk.CTkButton(right_frame, text="Cancel", width=90, fg_color="gray", 
-                     command=self.hide_sidebar).pack(side="right", padx=5)
-        ctk.CTkButton(right_frame, text="OK", width=90, 
-                     command=self.save_sidebar).pack(side="right", padx=5)
         
+        ctk.CTkButton(
+            right_frame, 
+            text="Cancel", 
+            width=90, 
+            fg_color="gray", 
+            command=self.hide_sidebar
+        ).pack(side="right", padx=5)
         
+        ctk.CTkButton(
+            right_frame, 
+            text="OK", 
+            width=90, 
+            command=self.on_sidebar_save
+        ).pack(side="right", padx=5)
+
+    def _redraw_entries(self):
+        """Force entry fields to redraw - fixes placeholder text visibility"""
+        for w in (self.f_name, self.f_path, self.f_filename, 
+                  self.f_cat, self.f_iname, self.f_ipath, self.search):
+            w.update_idletasks()
+
     def open_sidebar(self, mode: str, title: str, cat="", typ="", idx=-1, itm=None):
+        """
+        Open sidebar for add/edit operations
+        
+        Args:
+            mode: Operation mode (config_add, config_edit, item_add, item_edit)
+            title: Sidebar title
+            cat: Category (for items)
+            typ: Type (for items)
+            idx: Item index (for editing)
+            itm: Item data (for editing)
+        """
         self.sidebar_mode = mode
         self.editing_item = {"cat": cat, "typ": typ, "idx": idx, "itm": itm} if itm else None
         self.sidebar_title.configure(text=title)
         self.msg.configure(text="")
 
-        # Hide all fields first
-        for w in (self.f_name, self.f_path, self.f_filename, self.f_cat, self.f_type, self.f_iname, self.f_ipath):
+        # Hide and clear all fields
+        for w in (self.f_name, self.f_path, self.f_filename, 
+                  self.f_cat, self.f_type, self.f_iname, self.f_ipath):
             w.pack_forget()
-
-        # Clear all fields - delete and unfocus
-        for w in (self.f_name, self.f_path, self.f_filename, self.f_cat, self.f_iname, self.f_ipath):
             w.delete(0, "end")
-        
+
         self.f_type.set("folder")
 
+        # Show appropriate fields based on mode
         if "config" in mode:
             self.f_name.pack(pady=8, padx=20, fill="x")
             self.f_filename.pack(pady=8, padx=20, fill="x")
             self.f_path.pack(pady=8, padx=20, fill="x")
             
-            if mode == "config_edit" and self.logic.current_config:
-                # Parse existing path
-                full_path = self.logic.current_config.get('config_path', '')
-                if full_path:
-                    directory = os.path.dirname(full_path)
-                    filename = os.path.basename(full_path)
-                    self.f_name.insert(0, self.logic.current_config['name'])
-                    self.f_filename.insert(0, filename)
-                    if directory:
-                        self.f_path.insert(0, directory)
+            # Populate fields for edit mode
+            if mode == "config_edit":
+                config_data = self.logic.get_current_config_data()
+                if config_data:
+                    self.f_name.insert(0, config_data['name'])
+                    self.f_filename.insert(0, config_data['filename'])
+                    self.f_path.insert(0, config_data['directory'])
         else:
+            # Item add/edit
             self.f_cat.pack(pady=8, padx=20, fill="x")
             self.f_type.pack(pady=8, padx=20, fill="x")
             self.f_iname.pack(pady=8, padx=20, fill="x")
             self.f_ipath.pack(pady=8, padx=20, fill="x")
             
+            # Populate fields for edit mode
             if mode == "item_edit" and itm:
-                # For edit mode, set values (this will hide placeholders)
                 self.f_cat.insert(0, cat)
                 self.f_type.set(typ)
                 self.f_iname.insert(0, itm["name"])
                 self.f_ipath.insert(0, itm["path"])
 
-        # Force focus away from entries to show placeholders
-        self.sidebar_title.focus()
         self._show_sidebar()
 
-    def on_config_change(self, selection):
-        self.logic.select_config(selection)
-        self.refresh()
-
-    def toggle_edit(self):
-        self.edit_mode = not self.edit_mode
-        if self.edit_mode:
-            self.edit_bar.pack(fill="x", pady=8)
-        else:
-            self.edit_bar.pack_forget()
-        self.refresh()
-
-    def search_update(self):
-        self.search_query = self.search.get().strip()
-        self.refresh()
-
-    def refresh(self):
-        for w in self.scroll.winfo_children():
-            w.destroy()
-        data = self.logic.search(self.search_query)
-        if not data:
-            ctk.CTkLabel(self.scroll, text="No items", text_color="gray").pack(pady=40)
+    def _show_sidebar(self):
+        """Animate sidebar sliding in from left"""
+        if self.sidebar_visible or self.animating:
             return
-        for cat, types in data.items():
-            ctk.CTkLabel(self.scroll, text=cat.title(), 
-                        font=("Segoe UI", 18, "bold")).pack(anchor="w", padx=10, pady=(16, 4))
-            for typ, items in types.items():
-                ctk.CTkLabel(self.scroll, text=f"  {typ.title()}", 
-                            font=("Segoe UI", 13)).pack(anchor="w", padx=20)
-                for idx, itm in items:
-                    self._row(itm, cat, typ, idx)
-
-    def _row(self, itm: Dict, cat: str, typ: str, idx: int):
-        frm = ctk.CTkFrame(self.scroll)
-        frm.pack(fill="x", pady=3, padx=16)
-        name = itm.get("name", "?")
         
-        # Edit/Delete buttons on the LEFT side when in edit mode
-        if self.edit_mode:
-            del_btn = ctk.CTkButton(frm, text="Del", width=50, height=35, fg_color="red")
-            del_btn.configure(command=lambda: self.del_item(cat, typ, idx))
-            del_btn.pack(side="left", padx=(0, 2))
-            
-            edit_btn = ctk.CTkButton(frm, text="Edit", width=60, height=35)
-            edit_btn.configure(command=lambda: self.open_sidebar("item_edit", "Edit Item", cat, typ, idx, itm))
-            edit_btn.pack(side="left", padx=(0, 5))
+        self.animating = True
+        # Start off-screen to the left
+        self.sidebar.place(relx=-0.68, rely=0, relheight=1, relwidth=0.68)
+        self.sidebar_visible = True
         
-        # Launch button fills remaining space
-        launch_btn = ctk.CTkButton(frm, text=name, anchor="w", height=35)
-        launch_btn.configure(command=lambda: self.launch(typ, itm["path"], name))
-        launch_btn.pack(side="left", fill="x", expand=True)
+        def step(n=0):
+            if n < 20:
+                # Smooth animation: slide from -0.68 to 0
+                progress = n / 20
+                self.sidebar.place(
+                    relx=-0.68 + 0.68 * progress, 
+                    rely=0, 
+                    relheight=1, 
+                    relwidth=0.68
+                )
+                self.root.after(8, lambda: step(n + 1))
+            else:
+                # Final position
+                self.sidebar.place(relx=0, rely=0, relheight=1, relwidth=0.68)
+                self.animating = False
+                # Force entry fields to redraw
+                self.root.after(200, self._redraw_entries)
+        
+        step()
 
-    def launch(self, typ: str, path: str, name: str):
-        ok, err = self.logic.launch(typ, path, name)
-        if not ok:
-            messagebox.showerror("Error", err)
+    def hide_sidebar(self):
+        """Animate sidebar sliding out to the left"""
+        if not self.sidebar_visible or self.animating:
+            return
+        
+        self.animating = True
+        
+        def step(n=0):
+            if n < 20:
+                # Smooth animation: slide from 0 to -0.68
+                progress = n / 20
+                self.sidebar.place(
+                    relx=-0.68 * progress, 
+                    rely=0, 
+                    relheight=1, 
+                    relwidth=0.68
+                )
+                self.root.after(8, lambda: step(n + 1))
+            else:
+                # Remove from view
+                self.sidebar.place_forget()
+                self.sidebar_visible = False
+                self.animating = False
+                # Clear all fields
+                for w in (self.f_name, self.f_path, self.f_filename, 
+                          self.f_cat, self.f_iname, self.f_ipath):
+                    w.delete(0, "end")
+        
+        step()
 
-    def save_sidebar(self):
+    def on_sidebar_save(self):
+        """Handle sidebar save button - delegates to logic layer"""
         ok, msg = False, "Error"
+        
         if self.sidebar_mode == "config_add":
             ok, msg = self.logic.add_config(
                 self.f_name.get(), 
@@ -215,206 +369,276 @@ class ToolLauncherGUI:
                 self.f_filename.get()
             )
             if ok:
-                self.combo.configure(values=[c["name"] for c in self.logic.configs_list])
+                # Update combo box with new config list
+                self.combo.configure(values=self.logic.get_config_names())
                 self.combo.set(self.f_name.get())
-                self.on_config_change(self.f_name.get())
+                
         elif self.sidebar_mode == "config_edit":
             ok, msg = self.logic.edit_config(
-                self.logic.current_config['name'],
-                self.f_path.get(),
+                self.f_path.get(), 
                 self.f_filename.get()
             )
-            if ok:
-                self.on_config_change(self.logic.current_config['name'])
+            
         elif self.sidebar_mode == "item_add":
-            ok, msg = self.logic.add_item(self.f_cat.get(), self.f_type.get(),
-                                         self.f_iname.get(), self.f_ipath.get())
+            ok, msg = self.logic.add_item(
+                self.f_cat.get(), 
+                self.f_type.get(), 
+                self.f_iname.get(), 
+                self.f_ipath.get()
+            )
+            
         elif self.sidebar_mode == "item_edit" and self.editing_item:
             ok, msg = self.logic.edit_item(
-                self.editing_item["cat"], self.editing_item["typ"], self.editing_item["idx"],
-                self.f_iname.get(), self.f_ipath.get())
+                self.editing_item["cat"], 
+                self.editing_item["typ"], 
+                self.editing_item["idx"],
+                self.f_iname.get(), 
+                self.f_ipath.get()
+            )
         
+        # Show feedback message
         self.msg.configure(text=msg, text_color="green" if ok else "red")
+        
         if ok:
-            self.refresh()
-            self.root.after(1200, self.hide_sidebar)
+            self.refresh_display()
+            # Auto-close sidebar after 1 second
+            self.root.after(1000, self.hide_sidebar)
 
-    def hide_sidebar(self):
-        """Smooth sidebar closing animation."""
-        if not self.sidebar_visible or self.animating:
-            return
-        
-        self.animating = True
-        steps = 20
-        
-        def step(n=0):
-            if n <= steps:
-                # Ease-in cubic for smooth closing
-                progress = n / steps
-                eased = progress ** 3
-                new_x = 0 - (0.68 * eased)
-                
-                try:
-                    self.sidebar.place(relx=new_x, rely=0, relheight=1, relwidth=0.68)
-                    self.root.after(10, lambda: step(n + 1))
-                except:
-                    # Widget destroyed, stop animation
-                    self.animating = False
-                    return
-            else:
-                # Animation complete
-                self.sidebar.place_forget()
-                self.sidebar_visible = False
-                self.animating = False
-                
-                # Clear all fields and remove focus to show placeholders
-                for w in (self.f_name, self.f_path, self.f_filename, self.f_cat, self.f_iname, self.f_ipath):
-                    w.delete(0, "end")
-                
-                self.f_type.set("folder")
-                
-                # Force focus to root to ensure placeholders show next time
-                self.root.focus()
-        
-        step()
+    def on_config_change(self, selection: str):
+        """Handle config selection change"""
+        self.logic.select_config(selection)
+        self.refresh_display()
 
-    def _show_sidebar(self):
-        """Smooth sidebar opening animation."""
-        if self.sidebar_visible or self.animating:
-            return
-        
-        self.animating = True
-        self.sidebar_visible = True
-        self.sidebar.place(relx=-0.68, rely=0, relheight=1, relwidth=0.68)
-        steps = 20
-        
-        def step(n=0):
-            if n <= steps:
-                # Ease-out cubic for smooth opening
-                progress = n / steps
-                eased = 1 - ((1 - progress) ** 3)
-                new_x = -0.68 + (0.68 * eased)
-                
-                try:
-                    self.sidebar.place(relx=new_x, rely=0, relheight=1, relwidth=0.68)
-                    self.root.after(10, lambda: step(n + 1))
-                except:
-                    # Widget destroyed, stop animation
-                    self.animating = False
-                    return
-            else:
-                # Animation complete
-                self.sidebar.place(relx=0, rely=0, relheight=1, relwidth=0.68)
-                self.animating = False
-        
-        step()
-
-    def del_item(self, cat: str, typ: str, idx: int):
-        if messagebox.askyesno("Delete", "Remove this item?"):
-            self.logic.delete_item(cat, typ, idx)
-            self.refresh()
-
-    def delete_config(self):
-        if len(self.logic.configs_list) <= 1:
-            messagebox.showinfo("Stop", "Keep at least one config")
-            return
-        if messagebox.askyesno("Delete", f"Delete {self.combo.get()}?"):
-            self.logic.configs_list = [c for c in self.logic.configs_list 
-                                       if c["name"] != self.combo.get()]
-            self.logic.save_configs_list()
-            self.combo.configure(values=[c["name"] for c in self.logic.configs_list])
-            self.combo.set(self.logic.configs_list[0]["name"])
-            self.on_config_change(self.logic.configs_list[0]["name"])
-
-    def show_history(self):
-        dlg = ctk.CTkToplevel(self.root)
-        dlg.title("History")
-        dlg.geometry("620x540")
-        dlg.transient(self.root)
-        dlg.grab_set()
-        
-        # Center dialog
-        dlg.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 310
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 270
-        dlg.geometry(f"+{x}+{y}")
-        
-        # Header
-        header = ctk.CTkFrame(dlg)
-        header.pack(fill="x", padx=12, pady=(12, 8))
-        ctk.CTkLabel(header, text="Launch History", 
-                    font=("Segoe UI", 16, "bold")).pack(side="left", padx=10)
-        ctk.CTkButton(header, text="Clear All", width=100, fg_color="red",
-                     command=lambda: self._clear_history(dlg)).pack(side="right", padx=10)
-        
-        s = ctk.CTkScrollableFrame(dlg)
-        s.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        
-        if not self.logic.launch_history:
-            ctk.CTkLabel(s, text="No history yet", text_color="gray").pack(pady=40)
+    def toggle_edit(self):
+        """Toggle edit mode on/off"""
+        self.edit_mode = not self.edit_mode
+        if self.edit_mode:
+            self.edit_bar.pack(fill="x", pady=8)
         else:
-            for e in reversed(self.logic.launch_history):
-                f = ctk.CTkFrame(s)
-                f.pack(fill="x", pady=3)
-                ctk.CTkLabel(f, text=e["timestamp"], 
-                            font=("Consolas", 10), text_color="gray").pack(anchor="w", padx=10, pady=(5, 0))
-                ctk.CTkLabel(f, text=e["name"], 
-                            font=("Segoe UI", 13, "bold")).pack(anchor="w", padx=10)
-                ctk.CTkLabel(f, text=e["path"], 
-                            font=("Consolas", 9)).pack(anchor="w", padx=10, pady=(0, 5))
-        
-        ctk.CTkButton(dlg, text="Close", width=100, command=dlg.destroy).pack(pady=8)
+            self.edit_bar.pack_forget()
+        self.refresh_display()
 
-    def _clear_history(self, dialog):
-        """Clear launch history."""
-        if messagebox.askyesno("Clear History", "Clear all launch history?"):
-            self.logic.clear_history()
-            dialog.destroy()
-            messagebox.showinfo("Done", "History cleared")
+    def on_search_change(self):
+        """Handle search text change"""
+        self.refresh_display()
+
+    def refresh_display(self):
+        """Refresh the items display - gets data from logic layer"""
+        # Clear existing items
+        for w in self.scroll.winfo_children():
+            w.destroy()
+        
+        # Get filtered data from logic layer
+        query = self.search.get().strip()
+        data = self.logic.get_filtered_items(query)
+        
+        if not data:
+            ctk.CTkLabel(
+                self.scroll, 
+                text="No items found", 
+                text_color="gray"
+            ).pack(pady=40)
+            return
+        
+        # Display items by category and type
+        for cat, types in data.items():
+            # Category header
+            ctk.CTkLabel(
+                self.scroll, 
+                text=cat.title(), 
+                font=("Segoe UI", 18, "bold")
+            ).pack(anchor="w", padx=10, pady=(16, 4))
+            
+            for typ, items in types.items():
+                # Type subheader
+                ctk.CTkLabel(
+                    self.scroll, 
+                    text=f"  {typ.title()}", 
+                    font=("Segoe UI", 13)
+                ).pack(anchor="w", padx=20)
+                
+                # Display each item
+                for idx, itm in items:
+                    self._create_item_row(itm, cat, typ, idx)
+
+    def _create_item_row(self, itm: Dict, cat: str, typ: str, idx: int):
+        """
+        Create a row for a single item - pure UI
+        
+        Args:
+            itm: Item data
+            cat: Category
+            typ: Type
+            idx: Item index
+        """
+        frm = ctk.CTkFrame(self.scroll)
+        frm.pack(fill="x", pady=3, padx=16)
+        
+        name = itm.get("name", "?")
+        
+        # Launch button (full width)
+        launch_btn = ctk.CTkButton(frm, text=name, anchor="w")
+        launch_btn.configure(command=lambda: self.on_launch_item(typ, itm["path"], name))
+        launch_btn.pack(side="left", fill="x", expand=True)
+
+        # Edit and Delete buttons (only in edit mode)
+        if self.edit_mode:
+            # Edit button
+            edit_text = "Edit" if self.show_text else "✏"
+            edit_btn = ctk.CTkButton(frm, text=edit_text, width=60)
+            edit_btn.configure(
+                command=lambda: self.open_sidebar("item_edit", "Edit Item", cat, typ, idx, itm)
+            )
+            edit_btn.pack(side="right", padx=2)
+
+            # Delete button (red, no blue flash)
+            del_text = "Delete" if self.show_text else "✖"
+            del_btn = ctk.CTkButton(
+                frm, 
+                text=del_text, 
+                width=70, 
+                fg_color="red", 
+                hover_color="red"
+            )
+            del_btn.configure(command=lambda: self.on_delete_item(cat, typ, idx))
+            del_btn.pack(side="right")
+
+    def on_launch_item(self, typ: str, path: str, name: str):
+        """Handle item launch - delegates to logic layer"""
+        ok, err = self.logic.launch_item(typ, path, name)
+        if not ok:
+            messagebox.showerror("Launch Error", err)
+
+    def on_delete_item(self, cat: str, typ: str, idx: int):
+        """Handle item deletion with confirmation"""
+        if messagebox.askyesno("Delete Item", "Remove this item?"):
+            self.logic.delete_item(cat, typ, idx)
+            self.refresh_display()
+
+    def on_delete_config(self):
+        """Handle config deletion with confirmation"""
+        if self.logic.get_config_count() <= 1:
+            messagebox.showinfo("Cannot Delete", "Keep at least one config")
+            return
+        
+        current_name = self.combo.get()
+        if messagebox.askyesno("Delete Config", f"Delete '{current_name}'?"):
+            self.logic.delete_config(current_name)
+            
+            # Update UI
+            self.combo.configure(values=self.logic.get_config_names())
+            first_config = self.logic.get_first_config_name()
+            self.combo.set(first_config)
+            self.on_config_change(first_config)
 
     def show_settings(self):
+        """Show settings dialog - pure UI"""
         dlg = ctk.CTkToplevel(self.root)
         dlg.title("Settings")
-        dlg.geometry("340x240")
+        dlg.geometry("400x360")
         dlg.transient(self.root)
         dlg.grab_set()
-        
-        # Center dialog
-        dlg.update_idletasks()
-        x = self.root.winfo_x() + (self.root.winfo_width() // 2) - 170
-        y = self.root.winfo_y() + (self.root.winfo_height() // 2) - 120
-        dlg.geometry(f"+{x}+{y}")
 
-        ctk.CTkLabel(dlg, text="Appearance Mode:").pack(pady=(20, 5))
-        mode = ctk.CTkComboBox(dlg, values=["Light", "Dark", "System"], width=250)
-        mode.set(self.saved_settings["appearance_mode"])
+        # Get current settings from logic layer
+        current_settings = self.logic.get_settings()
+
+        # Appearance Mode
+        ctk.CTkLabel(
+            dlg, 
+            text="Appearance:", 
+            font=("Segoe UI", 14)
+        ).pack(pady=(20, 5))
+        
+        mode = ctk.CTkComboBox(
+            dlg, 
+            values=["Light", "Dark", "System"], 
+            width=320
+        )
+        mode.set(current_settings["appearance_mode"])
         mode.pack(pady=5)
 
-        ctk.CTkLabel(dlg, text="Color Theme:").pack(pady=(10, 5))
-        theme = ctk.CTkComboBox(dlg, values=["blue", "green", "dark-blue"], width=250)
-        theme.set(self.saved_settings["color_theme"])
+        # Color Theme
+        ctk.CTkLabel(
+            dlg, 
+            text="Color Theme:", 
+            font=("Segoe UI", 14)
+        ).pack(pady=(15, 5))
+        
+        theme = ctk.CTkComboBox(
+            dlg, 
+            values=["blue", "green", "dark-blue", "gray", "purple", "orange"], 
+            width=320
+        )
+        theme.set(current_settings["color_theme"])
         theme.pack(pady=5)
 
-        def ok():
-            s = {"appearance_mode": mode.get(), "color_theme": theme.get()}
-            self.logic._save_settings(s)
-            self.saved_settings = s
-            dlg.destroy()
-            messagebox.showinfo("Settings Saved", 
-                              "Changes will take effect after restarting the application.")
+        # Button Labels Toggle
+        ctk.CTkLabel(
+            dlg, 
+            text="Button Labels:", 
+            font=("Segoe UI", 14)
+        ).pack(pady=(15, 5))
+        
+        text_switch = ctk.CTkSwitch(
+            dlg, 
+            text="Show Text (vs Symbols)"
+        )
+        text_switch.pack(pady=5)
+        if self.show_text:
+            text_switch.select()
+        else:
+            text_switch.deselect()
 
+        def ok():
+            """Save settings and apply changes"""
+            new_settings = {
+                "appearance_mode": mode.get(),
+                "color_theme": theme.get(),
+                "show_text": text_switch.get()
+            }
+            
+            # Delegate to logic layer
+            self.logic.update_settings(new_settings)
+            
+            # Update local state
+            self.saved_settings = self.logic.get_settings()
+            self.show_text = new_settings["show_text"]
+            
+            # Apply theme changes
+            ctk.set_appearance_mode(new_settings["appearance_mode"])
+            ctk.set_default_color_theme(new_settings["color_theme"])
+            
+            dlg.destroy()
+            self.refresh_display()
+
+        # Dialog buttons
         btns = ctk.CTkFrame(dlg)
-        btns.pack(pady=15)
-        ctk.CTkButton(btns, text="OK", width=90, command=ok).pack(side="left", padx=10)
-        ctk.CTkButton(btns, text="Cancel", width=90, command=dlg.destroy).pack(side="left", padx=10)
+        btns.pack(pady=20)
+        
+        ctk.CTkButton(
+            btns, 
+            text="OK", 
+            width=120, 
+            command=ok
+        ).pack(side="left", padx=10)
+        
+        ctk.CTkButton(
+            btns, 
+            text="Cancel", 
+            width=120, 
+            command=dlg.destroy
+        ).pack(side="left", padx=10)
 
     def _load_first_config(self):
-        if self.logic.configs_list:
-            self.combo.set(self.logic.configs_list[0]["name"])
-            self.logic.select_config(self.logic.configs_list[0]["name"])
-            self.refresh()
+        """Load the first available config on startup"""
+        first_config = self.logic.get_first_config_name()
+        if first_config:
+            self.combo.set(first_config)
+            self.logic.select_config(first_config)
+            self.refresh_display()
 
     def run(self):
+        """Start the application main loop"""
         self.root.mainloop()
 
 
