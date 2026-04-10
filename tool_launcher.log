@@ -1,0 +1,17 @@
+2025-12-06 15:34:06,496 - ToolLauncherGUI - INFO - ToolLauncherGUI initialized.
+2025-12-06 15:34:06,497 - ToolLauncherLogic - INFO - ToolLauncherLogic initialized. Starting application.
+2025-12-06 15:34:06,498 - ToolLauncherLogic - INFO - Loaded 0 configurations from app_config.json.
+2025-12-06 15:36:44,445 - ToolLauncherGUI - INFO - ToolLauncherGUI initialized.
+2025-12-06 15:36:44,445 - ToolLauncherLogic - INFO - ToolLauncherLogic initialized. Starting application.
+2025-12-06 15:36:44,446 - ToolLauncherLogic - INFO - Loaded 0 configurations from app_config.json.
+2025-12-06 15:36:44,447 - ToolLauncherGUI - INFO - Applied custom theme: gray from c:\Users\diogo\Desktop\Git\Tool-Launcher\themes\gray.json
+2025-12-06 15:36:44,625 - ToolLauncherGUI - INFO - Restored window position.
+2025-12-06 15:36:46,625 - ToolLauncherGUI - INFO - Edit mode toggled: ON
+2025-12-06 15:36:47,509 - ToolLauncherGUI - INFO - Opening Settings dialog.
+2025-12-06 15:37:03,789 - ToolLauncherGUI - INFO - ToolLauncherGUI initialized.
+2025-12-06 15:37:03,789 - ToolLauncherLogic - INFO - ToolLauncherLogic initialized. Starting application.
+2025-12-06 15:37:03,790 - ToolLauncherLogic - INFO - Loaded 0 configurations from app_config.json.
+2025-12-06 15:37:03,791 - ToolLauncherGUI - INFO - Applied custom theme: gray from c:\Users\diogo\Desktop\Git\Tool-Launcher\themes\gray.json
+2025-12-06 15:37:03,988 - ToolLauncherGUI - INFO - Restored window position.
+2025-12-06 15:37:08,216 - ToolLauncherLogic - INFO - Settings saved successfully.
+2025-12-06 15:37:08,217 - ToolLauncherGUI - INFO - Application closed.

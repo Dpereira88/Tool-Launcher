@@ -1,7 +1,5 @@
 """
-Tool Launcher - Business Logic
-Pure business logic layer - ALL file operations and data management
-ZERO UI code - completely independent of GUI
+Tool Launcher – Business Logic (Complete, with Logging and Config Path Fix)
 """
 import json
 import os
@@ -10,637 +8,380 @@ import subprocess
 import webbrowser
 import platform
 from datetime import datetime
+import logging
 from typing import Dict, List, Optional, Any, Tuple
 
 
 class ToolLauncherLogic:
-    """Business logic for Tool Launcher - handles all data operations"""
-    
     def __init__(self):
-        """Initialize the logic layer"""
-        # Create data folder for JSON files
+        # Configure logging
+        self.logger = logging.getLogger('ToolLauncherLogic')
+        if not self.logger.handlers:
+            logging.basicConfig(level=logging.INFO,
+                                format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+                                filename='tool_launcher.log',
+                                filemode='a')
+        self.logger.info("ToolLauncherLogic initialized. Starting application.")
+            
         self.script_dir = os.path.dirname(os.path.abspath(__file__))
-        self.data_dir = os.path.join(self.script_dir, "data")
-        os.makedirs(self.data_dir, exist_ok=True)
-        
-        self.app_config_file = os.path.join(self.data_dir, "app_config.json")
-        self.history_file = os.path.join(self.data_dir, "launch_history.json")
+        self.app_config_file = os.path.join(self.script_dir, "app_config.json")
+        self.history_file = os.path.join(self.script_dir, "launch_history.json")
 
-        # State variables
         self.configs_list: List[Dict[str, str]] = []
         self.current_config: Optional[Dict[str, str]] = None
-        self.json_file: Optional[str] = None
-        self.raw_data: Any = {}
-        self.grouped_data: Dict[str, Dict[str, List[Dict[str, str]]]] = {}
+        self.current_data: Dict = {}
         self.launch_history: List[Dict[str, str]] = []
 
-        # Initialize application
         self._ensure_defaults()
-        self._load_app_config()
+        self.configs_list = self._load_configs_list() 
         self.launch_history = self._load_history()
 
-    # ==================== INITIALIZATION ====================
-
     def _ensure_defaults(self):
-        """Create default configuration files if they don't exist"""
         if os.path.exists(self.app_config_file):
             return
+
+        default_config_path = os.path.join(self.script_dir, "config_default.json")
+        self.logger.info("app_config.json not found. Creating default configuration files.")
         
-        # Create default app config
-        default = {
+        default_app = {
             "settings": {
                 "appearance_mode": "System",
                 "color_theme": "blue",
                 "show_text": True,
-                "window_pos": None
+                "window_positions": {}
             },
             "configs": [{
                 "name": "Default Tools",
-                "config_path": os.path.join(self.data_dir, "config_default.json").replace("\\", "/")
+                "path": self.script_dir,
+                "filename": "config_default.json"
             }]
         }
-        
-        with open(self.app_config_file, "w", encoding="utf-8") as f:
-            json.dump(default, f, indent=2)
-        
-        # Create sample config file
-        sample = {
-            "example": {
-                "web page": [
-                    {"name": "Google", "path": "https://google.com"},
-                    {"name": "GitHub", "path": "https://github.com"}
-                ]
-            }
-        }
-        
-        with open(os.path.join(self.data_dir, "config_default.json"), "w", encoding="utf-8") as f:
-            json.dump(sample, f, indent=2)
+        try:
+            with open(self.app_config_file, "w", encoding="utf-8") as f:
+                json.dump(default_app, f, indent=2)
 
-    def _load_app_config(self) -> None:
-        """Load the main application configuration"""
+            sample = {"example": {"web page": [{"name": "Google", "path": "https://google.com"}]}}
+            with open(default_config_path, "w", encoding="utf-8") as f:
+                json.dump(sample, f, indent=2)
+            self.logger.info("Default files created successfully.")
+        except Exception as e:
+            self.logger.error(f"FATAL: Could not create default files: {e}")
+
+
+    def _load_configs_list(self) -> List[Dict[str, str]]:
+        """Load configs list from app_config.json, handling both old and new formats."""
         try:
             with open(self.app_config_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                # Only load valid configs
-                self.configs_list = [
-                    c for c in data.get("configs", [])
-                    if "name" in c and "config_path" in c
-                ]
-        except Exception:
-            self.configs_list = []
+            configs = []
+            for c in data.get("configs", []):
+                name = c.get("name")
+                if not name:
+                    continue
 
-    def _save_app_config(self) -> None:
-        """Save the main application configuration"""
+                path = c.get("path")
+                filename = c.get("filename")
+
+                # FIX: Check for the older 'config_path' key if new keys are missing
+                if not path or not filename:
+                    config_path = c.get("config_path")
+                    if config_path:
+                        path = os.path.dirname(config_path)
+                        filename = os.path.basename(config_path)
+                
+                # Only add if we have all three components
+                if name and path and filename:
+                    configs.append({
+                        "name": name,
+                        "path": path,
+                        "filename": filename
+                    })
+
+            self.logger.info(f"Loaded {len(configs)} configurations from app_config.json.")
+            return configs
+        except Exception as e:
+            self.logger.error(f"Error loading configs from app_config.json: {e}")
+            return []
+
+    def save_configs_list(self) -> bool:
+        """Save configs list to app_config.json"""
         try:
             data = {}
             if os.path.exists(self.app_config_file):
                 with open(self.app_config_file, "r", encoding="utf-8") as f:
+                    # Load existing data to preserve 'settings' key
                     data = json.load(f)
-            
             data["configs"] = self.configs_list
-            
             with open(self.app_config_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+            self.logger.info("Successfully saved configurations list.")
+            return True
         except Exception as e:
-            print(f"Error saving app config: {e}")
+            self.logger.error(f"Error saving configurations list to {self.app_config_file}: {e}")
+            return False
 
-    # ==================== CONFIG MANAGEMENT ====================
-
-    def get_config_names(self) -> List[str]:
-        """Get list of config names for UI display"""
-        return [c["name"] for c in self.configs_list]
-
-    def get_config_count(self) -> int:
-        """Get total number of configs"""
-        return len(self.configs_list)
-
-    def get_first_config_name(self) -> Optional[str]:
-        """Get the first config name, if any"""
-        return self.configs_list[0]["name"] if self.configs_list else None
-
-    def get_current_config_data(self) -> Optional[Dict[str, str]]:
-        """
-        Get current config data split into components for editing
+    def add_config(self, name: str, path: str, filename: str) -> Tuple[bool, str]:
+        """Add a new configuration"""
+        if not name.strip() or not path.strip() or not filename.strip():
+            return False, "All fields required"
         
-        Returns:
-            Dict with 'name', 'directory', 'filename' or None
-        """
-        if not self.current_config:
-            return None
-        
-        full_path = self.current_config.get('config_path', '')
-        if not full_path:
-            return None
-        
-        return {
-            'name': self.current_config['name'],
-            'directory': os.path.dirname(full_path),
-            'filename': os.path.basename(full_path)
-        }
+        if not filename.lower().endswith(".json"):
+            filename += ".json"
 
-    def add_config(self, name: str, path: str = "", filename: str = "") -> Tuple[bool, str]:
-        """
-        Add a new configuration
-        
-        Args:
-            name: Config name
-            path: Directory path (optional)
-            filename: JSON filename (optional)
-            
-        Returns:
-            Tuple of (success, message)
-        """
-        if not name.strip():
-            return False, "Name required"
-        
-        # Check for duplicate names
         if any(c["name"] == name for c in self.configs_list):
             return False, "Config name already exists"
         
-        # Determine full path
-        if filename:
-            full = os.path.join(path or self.data_dir, filename)
-        else:
-            # Generate filename from name
-            safe_name = name.lower().replace(' ', '_')
-            full = os.path.join(self.data_dir, f"config_{safe_name}.json")
+        full_path = os.path.join(path, filename)
         
-        full = full.replace("\\", "/")
-        
-        # Ensure .json extension
-        if not full.endswith(".json"):
-            full += ".json"
-        
-        # Create the file
         try:
-            os.makedirs(os.path.dirname(full) or ".", exist_ok=True)
-            with open(full, "w", encoding="utf-8") as f:
-                json.dump({}, f)
-        except Exception as e:
-            return False, str(e)
-        
-        # Add to configs list
-        self.configs_list.append({"name": name, "config_path": full})
-        self._save_app_config()
-        
-        return True, "Config added successfully"
-
-    def edit_config(self, new_path: str, new_filename: str) -> Tuple[bool, str]:
-        """
-        Edit the current configuration's path
-        
-        Args:
-            new_path: New directory path
-            new_filename: New filename
-            
-        Returns:
-            Tuple of (success, message)
-        """
-        if not self.current_config:
-            return False, "No config selected"
-        
-        if not new_filename.strip():
-            return False, "Filename required"
-        
-        # Build new path
-        full_path = os.path.join(new_path or self.data_dir, new_filename)
-        full_path = full_path.replace("\\", "/")
-        
-        if not full_path.endswith(".json"):
-            full_path += ".json"
-        
-        old_path = self.current_config["config_path"]
-        
-        # If path changed, move the file
-        if old_path != full_path:
-            try:
-                # Read old data
-                if os.path.exists(old_path):
-                    with open(old_path, "r", encoding="utf-8") as f:
-                        data = json.load(f)
-                else:
-                    data = {}
-                
-                # Write to new location
-                os.makedirs(os.path.dirname(full_path) or ".", exist_ok=True)
+            os.makedirs(path, exist_ok=True)
+            if not os.path.exists(full_path):
                 with open(full_path, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
-                
-                # Delete old file
-                if os.path.exists(old_path):
-                    os.remove(old_path)
-                
-                # Update config
-                self.current_config["config_path"] = full_path
-                self.json_file = full_path
-                
-                # Update in list
-                for c in self.configs_list:
-                    if c["name"] == self.current_config["name"]:
-                        c["config_path"] = full_path
-                        break
-                
-                self._save_app_config()
-                
-                return True, "Config updated successfully"
-            except Exception as e:
-                return False, str(e)
-        else:
-            return True, "No changes made"
-
-    def delete_config(self, name: str) -> bool:
-        """
-        Delete a configuration
+                    json.dump({}, f, indent=2)
+            else:
+                with open(full_path, "r", encoding="utf-8") as f:
+                    json.load(f)
+        except Exception as e:
+            self.logger.error(f"File or path error when adding config: {e}")
+            return False, f"File or path error: {str(e)}"
         
-        Args:
-            name: Config name to delete
-            
-        Returns:
-            True if successful
-        """
-        self.configs_list = [c for c in self.configs_list if c["name"] != name]
-        self._save_app_config()
-        return True
+        self.configs_list.append({"name": name, "path": path, "filename": filename})
+        if self.save_configs_list():
+            self.logger.info(f"Added new config: {name}")
+            return True, "Config created"
+        else:
+            self.configs_list.pop()
+            return False, "Failed to save configurations list (app_config.json)"
+
 
     def select_config(self, name: str) -> bool:
-        """
-        Select and load a configuration
-        
-        Args:
-            name: Config name to select
-            
-        Returns:
-            True if successful
-        """
+        """Select and load a configuration"""
         for c in self.configs_list:
             if c["name"] == name:
                 self.current_config = c
-                self.json_file = c["config_path"]
-                self.raw_data = self._load_json()
-                self.grouped_data = self._normalize(self.raw_data)
+                self.current_data = self._load_current_config()
+                self.logger.info(f"Selected config: {name}")
                 return True
         return False
 
-    # ==================== JSON FILE OPERATIONS ====================
-
-    def _load_json(self) -> Any:
-        """Load JSON data from current config file"""
-        if not self.json_file:
+    def _load_current_config(self) -> Dict:
+        """Load the current config file"""
+        if not self.current_config:
             return {}
         
         try:
-            with open(self.json_file, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            # Create empty file if it doesn't exist or is corrupted
-            with open(self.json_file, "w", encoding="utf-8") as f:
-                json.dump({}, f)
+            full_path = os.path.join(self.current_config["path"], self.current_config["filename"])
+            with open(full_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return self._normalize_data(data)
+        except Exception as e:
+            self.logger.error(f"Error loading current config file ({self.current_config['filename']}): {e}")
             return {}
 
-    def _save_json(self):
-        """Save JSON data to current config file"""
-        if self.json_file:
-            with open(self.json_file, "w", encoding="utf-8") as f:
-                json.dump(self.raw_data, f, indent=2)
+    def save_current_config(self) -> bool:
+        """Save the current config data to file"""
+        if not self.current_config:
+            self.logger.warning("Attempted to save current config, but no config is selected.")
+            return False
+        
+        try:
+            full_path = os.path.join(self.current_config["path"], self.current_config["filename"])
+            with open(full_path, "w", encoding="utf-8") as f:
+                json.dump(self.current_data, f, indent=2)
+            self.logger.info(f"Successfully saved current configuration to {full_path}")
+            return True
+        except Exception as e:
+            self.logger.error(f"Error saving current config to {full_path}: {e}")
+            return False
 
-    def _normalize(self, data: Any) -> Dict[str, Dict[str, List[Dict]]]:
-        """
-        Normalize data structure to consistent format
+    def _normalize_data(self, data: Any) -> Dict:
+        """Normalize data to ensure consistent structure"""
+        if not isinstance(data, dict):
+            return {}
         
-        Args:
-            data: Raw data (list or dict)
-            
-        Returns:
-            Normalized dict structure: {category: {type: [items]}}
-        """
-        g: Dict[str, Dict[str, List[Dict]]] = {}
+        normalized = {}
+        for category, types in data.items():
+            if not isinstance(types, dict):
+                continue
+            normalized[category] = {}
+            for typ, items in types.items():
+                if isinstance(items, dict):
+                    normalized[category][typ] = [items]
+                elif isinstance(items, list):
+                    normalized[category][typ] = items
+                else:
+                    normalized[category][typ] = []
         
-        if isinstance(data, list):
-            # List format: [{category, type, name, path}, ...]
-            for i in data:
-                c = i.get("category", "uncategorized").lower()
-                t = i.get("type", "").lower()
-                g.setdefault(c, {}).setdefault(t, []).append(i)
-                
-        elif isinstance(data, dict):
-            # Dict format: {category: {type: [items]}}
-            for c, types in data.items():
-                c = c.lower()
-                g[c] = {}
-                
-                for t, v in types.items():
-                    t = t.lower()
-                    lst = []
-                    
-                    if isinstance(v, list):
-                        lst = v
-                    elif isinstance(v, dict):
-                        # Single item as dict
-                        lst = [v]
-                    
-                    g[c][t] = lst
-        
-        return g
-
-    # ==================== ITEM MANAGEMENT ====================
+        return normalized
 
     def add_item(self, cat: str, typ: str, name: str, path: str) -> Tuple[bool, str]:
-        """
-        Add a new item
-        
-        Args:
-            cat: Category
-            typ: Type
-            name: Item name
-            path: Item path/URL
-            
-        Returns:
-            Tuple of (success, message)
-        """
+        """Add item to current config"""
         if not all([cat, typ, name, path]):
             return False, "All fields required"
         
-        new = {"name": name, "path": path}
-        c, t = cat.lower(), typ.lower()
+        new_item = {"name": name, "path": path}
         
-        # Add to raw data structure
-        self.raw_data.setdefault(c, {}).setdefault(t, []).append(new)
+        if cat not in self.current_data:
+            self.current_data[cat] = {}
+        if typ not in self.current_data[cat]:
+            self.current_data[cat][typ] = []
         
-        # Save and refresh
-        self._save_json()
-        self.grouped_data = self._normalize(self.raw_data)
-        
-        return True, "Item added successfully"
-
-    def edit_item(self, cat: str, typ: str, idx: int, new_name: str, new_path: str) -> Tuple[bool, str]:
-        """
-        Edit an existing item
-        
-        Args:
-            cat: Category
-            typ: Type
-            idx: Item index
-            new_name: New item name
-            new_path: New item path/URL
-            
-        Returns:
-            Tuple of (success, message)
-        """
-        c, t = cat.lower(), typ.lower()
-        
-        if c in self.raw_data and t in self.raw_data[c]:
-            items = self.raw_data[c][t]
-            if 0 <= idx < len(items):
-                items[idx]["name"] = new_name
-                items[idx]["path"] = new_path
-                
-                # Save and refresh
-                self._save_json()
-                self.grouped_data = self._normalize(self.raw_data)
-                
-                return True, "Item updated successfully"
-        
-        return False, "Item not found"
+        self.current_data[cat][typ].append(new_item)
+        if self.save_current_config():
+            self.logger.info(f"Added item '{name}' to {cat}/{typ}")
+            return True, "Item added"
+        else:
+            self.logger.error(f"Failed to save after adding item '{name}'.")
+            return False, "Failed to save configuration file."
 
     def delete_item(self, cat: str, typ: str, idx: int) -> bool:
-        """
-        Delete an item
-        
-        Args:
-            cat: Category
-            typ: Type
-            idx: Item index
-            
-        Returns:
-            True if successful
-        """
-        c, t = cat.lower(), typ.lower()
-        
-        if c in self.raw_data and t in self.raw_data[c]:
-            items = self.raw_data[c][t]
+        """Delete item from current config"""
+        if cat in self.current_data and typ in self.current_data[cat]:
+            items = self.current_data[cat][typ]
             if 0 <= idx < len(items):
+                deleted_name = items[idx]["name"]
                 del items[idx]
-                
-                # Clean up empty structures
                 if not items:
-                    del self.raw_data[c][t]
-                if not self.raw_data[c]:
-                    del self.raw_data[c]
+                    del self.current_data[cat][typ]
+                if not self.current_data[cat]:
+                    del self.current_data[cat]
                 
-                # Save and refresh
-                self._save_json()
-                self.grouped_data = self._normalize(self.raw_data)
-                
-                return True
-        
+                if self.save_current_config():
+                    self.logger.info(f"Deleted item '{deleted_name}' from {cat}/{typ}")
+                    return True
+                else:
+                    self.logger.error(f"Failed to save after deleting item '{deleted_name}'.")
+                    # Note: Full state restoration on failure is complex, logging the failure is key.
+                    return False
         return False
 
-    # ==================== SEARCH AND FILTER ====================
-
-    def get_filtered_items(self, query: str) -> Dict[str, Dict[str, List[Tuple[int, Dict]]]]:
-        """
-        Get filtered items based on search query
+    def launch(self, typ: str, path: str, name: str) -> Tuple[bool, str]:
+        """Launch a tool/file/webpage"""
+        self.add_to_history(name, path, typ)
+        self.logger.info(f"Attempting to launch: {name} ({typ}) at {path}")
         
-        Args:
-            query: Search query string
-            
-        Returns:
-            Filtered items: {category: {type: [(index, item)]}}
-        """
-        q = query.lower()
-        out = {}
-        
-        for c, types in self.grouped_data.items():
-            for t, items in types.items():
-                # Filter items that match query
-                matches = [
-                    (i, it) for i, it in enumerate(items)
-                    if not q or 
-                       q in it.get("name", "").lower() or 
-                       q in it.get("path", "").lower()
-                ]
-                
-                if matches:
-                    out.setdefault(c, {})[t] = matches
-        
-        return out
-
-    # ==================== LAUNCH OPERATIONS ====================
-
-    def launch_item(self, typ: str, path: str, name: str) -> Tuple[bool, str]:
-        """
-        Launch an item
-        
-        Args:
-            typ: Item type
-            path: Item path/URL
-            name: Item name
-            
-        Returns:
-            Tuple of (success, error_message)
-        """
-        # Add to history
-        self._add_to_history(name, path, typ)
-        
-        # Handle web pages
         if typ == "web page":
             try:
                 webbrowser.open(path)
                 return True, ""
             except Exception as e:
+                self.logger.error(f"Web launch failed for {name}: {e}")
                 return False, str(e)
         
-        # Handle other types (Windows-specific)
         try:
             if platform.system() == "Windows":
-                flag = subprocess.CREATE_NEW_CONSOLE
-                
                 if typ == "folder":
                     os.startfile(path)
-                    
                 elif typ == "python project":
                     subprocess.Popen(
-                        [sys.executable, "-i", path], 
-                        creationflags=flag
+                        [sys.executable, "-i", path],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE
                     )
-                    
                 elif typ == "bat file":
                     subprocess.Popen(
-                        ["cmd", "/k", path], 
-                        creationflags=flag
+                        ["cmd", "/k", path],
+                        creationflags=subprocess.CREATE_NEW_CONSOLE
                     )
+                else:
+                    os.startfile(path)
             else:
-                # Basic support for other platforms
                 if typ == "folder":
                     subprocess.Popen(["xdg-open", path])
+                elif typ == "python project":
+                    subprocess.Popen(["python3", "-i", path])
                 else:
-                    subprocess.Popen([path])
-            
+                    subprocess.Popen(["xdg-open", path])
             return True, ""
-            
         except Exception as e:
+            self.logger.error(f"System launch failed for {name}: {e}")
             return False, str(e)
 
-    # ==================== LAUNCH HISTORY ====================
-
     def _load_history(self) -> List[Dict[str, str]]:
-        """Load launch history from file"""
+        """Load launch history"""
         if not os.path.exists(self.history_file):
             return []
-        
         try:
             with open(self.history_file, "r", encoding="utf-8") as f:
-                # Keep only last 50 entries
                 return json.load(f)[-50:]
-        except:
+        except Exception as e:
+            self.logger.warning(f"Error loading launch history: {e}")
             return []
 
-    def _save_history(self) -> None:
-        """Save launch history to file"""
-        try:
-            with open(self.history_file, "w", encoding="utf-8") as f:
-                json.dump(self.launch_history, f, indent=2)
-        except Exception as e:
-            print(f"Error saving history: {e}")
-
-    def _add_to_history(self, name: str, path: str, typ: str):
-        """
-        Add entry to launch history
-        
-        Args:
-            name: Item name
-            path: Item path/URL
-            typ: Item type
-        """
+    def add_to_history(self, name: str, path: str, typ: str):
+        """Add entry to launch history"""
         self.launch_history.append({
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "name": name,
             "path": path,
             "type": typ
         })
-        
-        # Keep only last 50 entries
         self.launch_history = self.launch_history[-50:]
-        self._save_history()
+        try:
+            with open(self.history_file, "w", encoding="utf-8") as f:
+                json.dump(self.launch_history, f, indent=2)
+        except Exception as e:
+            self.logger.error(f"Error saving launch history: {e}")
 
-    # ==================== SETTINGS MANAGEMENT ====================
-
-    def get_settings(self) -> Dict[str, Any]:
-        """
-        Get application settings
-        
-        Returns:
-            Settings dictionary
-        """
+    def load_settings(self) -> Dict[str, Any]:
+        """Load application settings"""
         default = {
             "appearance_mode": "System",
             "color_theme": "blue",
             "show_text": True,
-            "window_pos": None
+            "window_positions": {}
         }
         
         if not os.path.exists(self.app_config_file):
-            self._save_settings(default)
+            self.logger.warning("app_config.json missing during settings load.")
+            self.save_settings(default)
             return default
         
         try:
             with open(self.app_config_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
-            
             settings = data.get("settings", {})
-            
-            # Return settings with defaults for missing keys
             return {
                 "appearance_mode": settings.get("appearance_mode", default["appearance_mode"]),
                 "color_theme": settings.get("color_theme", default["color_theme"]),
                 "show_text": settings.get("show_text", default["show_text"]),
-                "window_pos": settings.get("window_pos", default["window_pos"])
+                "window_positions": settings.get("window_positions", {})
             }
-        except:
-            self._save_settings(default)
+        except Exception as e:
+            self.logger.error(f"Error loading settings from app_config.json: {e}")
+            self.save_settings(default)
             return default
 
-    def update_settings(self, new_settings: Dict[str, Any]):
-        """
-        Update application settings (partial update)
-        
-        Args:
-            new_settings: Dict with settings to update
-        """
-        current = self.get_settings()
-        current.update(new_settings)
-        self._save_settings(current)
-
-    def save_window_position(self, x: int, y: int, w: int, h: int):
-        """
-        Save window position and size
-        
-        Args:
-            x: X position
-            y: Y position
-            w: Width
-            h: Height
-        """
-        current = self.get_settings()
-        current["window_pos"] = [x, y, w, h]
-        self._save_settings(current)
-
-    def _save_settings(self, settings: Dict[str, Any]):
-        """
-        Save settings to file
-        
-        Args:
-            settings: Complete settings dictionary
-        """
+    def save_settings(self, settings: Dict[str, Any]):
+        """Save application settings"""
         try:
             data = {}
             if os.path.exists(self.app_config_file):
                 with open(self.app_config_file, "r", encoding="utf-8") as f:
                     data = json.load(f)
-            
             data["settings"] = settings
-            
             with open(self.app_config_file, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
+            self.logger.info("Settings saved successfully.")
         except Exception as e:
-            print(f"Error saving settings: {e}")
+            self.logger.error(f"Error saving settings: {e}")
+
+    def search(self, query: str) -> Dict:
+        """Search items by name or path"""
+        query = query.lower()
+        result = {}
+        
+        for category, types in self.current_data.items():
+            for typ, items in types.items():
+                matches = []
+                for idx, item in enumerate(items):
+                    name = item.get("name", "").lower()
+                    path = item.get("path", "").lower()
+                    if not query or query in name or query in path:
+                        matches.append((idx, item))
+                
+                if matches:
+                    if category not in result:
+                        result[category] = {}
+                    result[category][typ] = matches
+        
+        return result
